@@ -1,0 +1,31 @@
+﻿# venv & Python junk
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Local env & secrets
+.env
+.env.*
+!.env.example
+
+# Playwright artifacts / browser profile
+edge-profile/
+playwright-report/
+test-results/
+*.zip
+
+# Project outputs
+data/debug/
+data/notices/
+Data/
+*.png
+*.csv
+*.xlsx
+*.docx
+
+# OS noise
+.DS_Store
+Thumbs.db

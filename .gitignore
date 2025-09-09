@@ -29,3 +29,37 @@ Data/
 # OS noise
 .DS_Store
 Thumbs.db
+# Python/venv
+.venv/
+__pycache__/
+*.pyc *.pyo *.pyd
+
+# Packaging/build
+*.egg-info/
+build/
+dist/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Playwright
+edge-profile/
+playwright-report/
+test-results/
+
+# Project outputs
+data/debug/
+data/notices/
+Data/
+
+# Binaries/artifacts
+*.png
+*.csv
+*.xlsx
+*.docx
+
+# OS junk
+.DS_Store
+Thumbs.db

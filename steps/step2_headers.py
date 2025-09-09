@@ -2,7 +2,7 @@
 from pathlib import Path
 from loguru import logger
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-from pw_common import login, find_grid_context, map_headers, PW_LIST_URL, make_context
+from pw_auto.pw_common import login, find_grid_context, map_headers, PW_LIST_URL, make_context
 
 DEBUG_DIR = Path("data/debug")  # fixed casing ("data"), same as step1
 
@@ -16,7 +16,6 @@ def main():
         "ok": False,
         "headers": {},
         "report_url": PW_LIST_URL,
-        "screenshot": str(shot),
         "error": None,
     }
 
@@ -43,9 +42,6 @@ def main():
             headers = map_headers(ctx)
             status["headers"] = headers
             status["ok"] = len(headers) > 0
-
-            # Screenshot for debugging
-            ctx.screenshot(path=str(shot), full_page=True)
 
         except PWTimeout as te:
             status["error"] = f"Timeout waiting for grid: {te}"

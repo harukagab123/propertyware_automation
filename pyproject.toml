@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "propertyware-automation"
+version = "0.2.0"
+requires-python = ">=3.11"
+dependencies = [
+  "playwright>=1.45",
+  "loguru>=0.7",
+  "python-dotenv>=1.0",
+  "python-docx>=1.1",
+  "python-dateutil>=2.9",
+  "streamlit>=1.33",
+]
+
+[project.scripts]
+pw-auto = "pw_auto.orchestrator:cli"
+pw-ui   = "pw_auto.launch_ui:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["pw_auto", "pw_auto.*"]
+
+[tool.setuptools.package-data]
+"pw_auto.assets.templates" = ["*.docx"]

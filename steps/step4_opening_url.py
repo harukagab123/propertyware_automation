@@ -1,22 +1,20 @@
-# step4_opening_url.py — robust nav + fast scraping + 10 qualifiers
+# step4_opening_url.py — robust nav + fast scraping + 10 qualifiers (no screenshots)
 from pathlib import Path
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-from pw_common import make_context, login, label_value, safe_float
+from pw_auto.pw_common import make_context, login, label_value, safe_float
 import csv, time
 
 # ---------- paths ----------
 DEBUG_DIR = Path("data/debug")
 IN_CSV = DEBUG_DIR / "rows_sample.csv"   # from step3
 OUT_CSV = DEBUG_DIR / "rows_step4.csv"
-SHOT_DIR = DEBUG_DIR / "shots_step4"
 
 # ---------- knobs ----------
 MAX_QUALIFIERS = 10            # only collect this many
-HEADLESS = False                # headless is faster; set False if debugging
+HEADLESS = False               # headless is faster; set False if debugging
 PAGE_TIMEOUT = 90_000          # ms; PW pages can be slow
 NAV_WAIT_PRIMARY = "commit"    # try very early commit first
 NAV_WAIT_FALLBACK = "domcontentloaded"
-TAKE_SCREENSHOTS = False
 SHORT_TXT_TIMEOUT = 1500       # ms used in _safe_text
 # ----------------------------
 
@@ -117,10 +115,8 @@ def smart_goto(page, url: str, max_tries=3):
                 time.sleep(0.15)
                 return True
             except PWTimeout:
-                # last retry will bubble out
                 if attempt == max_tries:
                     raise
-                # attempt re-login just in case
                 try:
                     login(page)
                 except Exception:
@@ -325,7 +321,6 @@ def scrape_second_owner_name(page) -> str:
 # ---------- main ----------
 def main():
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-    SHOT_DIR.mkdir(parents=True, exist_ok=True)
 
     status = {
         "step": "open_urls_total_unpaid_gt_1000_fast",
@@ -357,7 +352,7 @@ def main():
         "lease_href",
         "unit_href",
         "portfolio_href",
-        "lease_name",     # <-- add this too (comes from IN_CSV row)
+        "lease_name",
     ]
     out_rows = []
 
@@ -399,11 +394,6 @@ def main():
                     amount = safe_float(unpaid_text)
                     if amount <= 1000.0:
                         status["skipped_total_unpaid_le_1000"] += 1
-                        if TAKE_SCREENSHOTS:
-                            try:
-                                page.screenshot(path=str(SHOT_DIR / f"lease_skip_{idx}.png"))
-                            except Exception:
-                                pass
                         continue
 
                     tenant_name = scrape_primary_contact_name_from_contacts_table(page).strip()
@@ -417,8 +407,7 @@ def main():
                                 smart_goto(page, unit_url)
                                 unit_address = scrape_unit_address(page).strip()
                                 cache_unit_addr[unit_url] = unit_address
-                            except Exception as e:
-                                # keep going even if unit fails
+                            except Exception:
                                 pass
 
                     # Portfolio (cached)
@@ -430,8 +419,7 @@ def main():
                                 smart_goto(page, portfolio_url)
                                 owner_name = scrape_second_owner_name(page).strip()
                                 cache_owner_name[portfolio_url] = owner_name
-                            except Exception as e:
-                                # keep going even if portfolio fails
+                            except Exception:
                                 pass
 
                     out_rows.append({
@@ -445,19 +433,8 @@ def main():
                         "lease_name": (r.get("lease_name") or "").strip(),
                     })
 
-                    if TAKE_SCREENSHOTS:
-                        try:
-                            page.screenshot(path=str(SHOT_DIR / f"ok_{idx}.png"))
-                        except Exception:
-                            pass
-
-                except Exception as e:
+                except Exception:
                     status["errors"] += 1
-                    if TAKE_SCREENSHOTS:
-                        try:
-                            page.screenshot(path=str(SHOT_DIR / f"error_{idx}.png"))
-                        except Exception:
-                            pass
                     continue
 
         finally:

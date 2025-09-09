@@ -2,7 +2,7 @@
 from pathlib import Path
 from loguru import logger
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-from pw_auto.pw_common import login, find_grid_context, map_headers, PW_LIST_URL, make_context
+from pw_common import login, find_grid_context, map_headers, PW_LIST_URL, make_context
 
 DEBUG_DIR = Path("data/debug")  # fixed casing ("data"), same as step1
 

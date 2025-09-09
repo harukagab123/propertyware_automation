@@ -7,7 +7,7 @@ from collections import defaultdict
 from io import BytesIO
 
 from docx import Document  # pip install python-docx
-from pw_auto.pw_common import WORD_TEMPLATE_PATH, NOTICES_DIR
+from pw_common import WORD_TEMPLATE_PATH, NOTICES_DIR
 
 BASE_DIR = Path(__file__).resolve().parent
 DEBUG_DIR = BASE_DIR / "data" / "debug"

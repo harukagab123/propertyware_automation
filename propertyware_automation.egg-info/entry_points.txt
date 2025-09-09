@@ -1,3 +1,0 @@
-[console_scripts]
-pw-auto = pw_auto.orchestrator:cli
-pw-ui = pw_auto.launch_ui:main

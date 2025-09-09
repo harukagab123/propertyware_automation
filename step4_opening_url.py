@@ -1,7 +1,7 @@
 # step4_opening_url.py — robust nav + fast scraping + 10 qualifiers (no screenshots)
 from pathlib import Path
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-from pw_auto.pw_common import make_context, login, label_value, safe_float
+from pw_common import make_context, login, label_value, safe_float
 import csv, time
 
 # ---------- paths ----------

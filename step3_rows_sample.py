@@ -2,7 +2,7 @@
 from pathlib import Path
 from loguru import logger
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-from pw_auto.pw_common import (
+from pw_common import (
     make_context, login, PW_LIST_URL,
     find_grid_context, map_headers, normalize_pw_href
 )

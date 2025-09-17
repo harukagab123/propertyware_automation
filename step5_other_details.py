@@ -3,7 +3,7 @@
 #
 # Output file: data/debug/<MM-DD-YYYY>_notices.csv
 # Fields: TenantName, TenantAddress, AmountDue, DateOfUnpaidRent, PropertyOwner,
-#         Date, Day, Month, Year, County (from Step 3 "building_county" via lease_href)
+#         Date, Day, Month, Year(YY), City, County (from Step 3 "building_county" via lease_href)
 
 from pathlib import Path
 from datetime import date
@@ -35,7 +35,7 @@ today = date.today()
 DATE_STR = today.strftime("%m-%d-%Y")          # Date (MM-DD-YYYY)
 DAY_STR = str(int(today.strftime("%d")))       # Day without leading zero
 MONTH_STR = today.strftime("%B")               # Month name (e.g., September)
-YEAR_STR = today.strftime("%Y")                # Year (YYYY)
+YEAR_STR = today.strftime("%y")                # Year as YY (two digits)
 DATE_UNPAID_STR = subtract_months(today, 2).strftime("%m-%d-%Y")  # DateOfUnpaidRent
 
 OUT_CSV = DEBUG_DIR / f"{DATE_STR}_notices.csv"
@@ -65,6 +65,52 @@ def split_aliases(lease_name: str) -> List[str]:
     parts = re.split(r"\s*(?:&|/|,| and )\s*", s, flags=re.I)
     return [p for p in (p.strip() for p in parts) if p]
 
+def city_from_tenant_address(addr: str) -> str:
+    """
+    Extract the city as the trailing word(s) immediately before the first comma.
+    Handles cases like:
+      '1656 84th Ave Apt 2 Oakland, CA 94621-1748' -> 'Oakland'
+      '123 Main St San Jose, CA 95112'            -> 'San Jose'
+      'Quezon City, NCR'                          -> 'Quezon City'
+    Heuristic: walk tokens backwards from the first-comma segment and
+    collect city tokens until we hit a street/unit token or a token with digits.
+    """
+    s = (addr or "").strip()
+    if not s:
+        return ""
+    # Part before the first comma
+    left = s.split(",", 1)[0].strip()
+    if not left:
+        return ""
+
+    tokens = left.split()
+    # Common non-city tokens seen before the city name
+    stop = {
+        "st","street","ave","avenue","rd","road","blvd","boulevard",
+        "hwy","highway","pkwy","parkway","trl","trail","ter","terrace",
+        "ln","lane","dr","drive","ct","court","cir","circle","pl","place",
+        "way","aly","alley","apt","unit","ste","suite","bldg","fl","floor",
+        "rm","room","#"
+    }
+
+    city_tokens = []
+    for tok in reversed(tokens):
+        t = tok.strip(" .,#").lower()
+        # Stop when we hit a token with digits or a street/unit keyword
+        if any(ch.isdigit() for ch in t) or t in stop:
+            # If we've already started collecting city tokens, break.
+            if city_tokens:
+                break
+            # Otherwise skip and keep moving left (e.g., 'Apt', '2')
+            continue
+        city_tokens.append(tok.strip(","))
+    if city_tokens:
+        return " ".join(reversed(city_tokens))
+    # Fallback: last token before the comma
+    return tokens[-1] if tokens else ""
+
+
+# ---- Step 3 (County) maps ----
 def build_maps_step3(step3_rows: List[dict]) -> Tuple[Dict[str, str], Dict[str, str], List[Tuple[str, str]]]:
     """
     Returns:
@@ -147,8 +193,9 @@ def main():
         "Date",
         "Day",
         "Month",
-        "Year",
-        "County",   # Building County from Step 3
+        "Year",   # two digits
+        "City",   # from TenantAddress (text before first comma)
+        "County", # Building County from Step 3
     ]
 
     out_rows = []
@@ -160,6 +207,7 @@ def main():
         lease_href = (r.get("lease_href") or "").strip()   # <-- added in Step 4
 
         county = lookup_county(lease_href, tenant_name, by_href, alias_map, lease_names)
+        city = city_from_tenant_address(tenant_addr)
 
         out_rows.append({
             "TenantName": tenant_name,
@@ -170,7 +218,8 @@ def main():
             "Date": DATE_STR,
             "Day": DAY_STR,
             "Month": MONTH_STR,
-            "Year": YEAR_STR,
+            "Year": YEAR_STR,  # YY
+            "City": city,
             "County": county,
         })
 

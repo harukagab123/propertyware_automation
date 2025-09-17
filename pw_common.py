@@ -17,7 +17,7 @@ load_dotenv(env_path)
 PW_BASE_URL = os.getenv("PW_BASE_URL", "https://app.propertyware.com/pw/home/home.do").strip()
 PW_LIST_URL = os.getenv("PW_LIST_URL") or os.getenv("PW_REPORT_URL", "")
 EXCEL_PATH = Path(os.getenv("EXCEL_PATH", BASE_DIR / "data" / "output_excel.xlsx"))
-WORD_TEMPLATE_PATH = Path(os.getenv("WORD_TEMPLATE_PATH", BASE_DIR / "templates" / "3day_notice_template.docx"))
+WORD_TEMPLATE_PATH = Path(os.getenv("WORD_TEMPLATE_PATH", BASE_DIR / "templates" / "3Day_Notice_Template.docx"))
 NOTICES_DIR = Path(os.getenv("NOTICES_DIR", BASE_DIR / "data" / "notices"))
 
 PW_USERNAME = os.getenv("PW_USERNAME", "").strip()

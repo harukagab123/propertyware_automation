@@ -1,237 +1,262 @@
-# step6_generate.py (single-line address + Times New Roman + underline rules)
+# step6_generate.py
 from pathlib import Path
 from datetime import datetime, date
-from typing import Dict, List, Optional
-import argparse, csv, re, sys
-from collections import defaultdict
-from io import BytesIO
+import csv, sys, re, calendar, glob
+from docxtpl import DocxTemplate
 
-from docx import Document  # pip install python-docx
-from pw_common import WORD_TEMPLATE_PATH, NOTICES_DIR
-
+# ---- paths ----
 BASE_DIR = Path(__file__).resolve().parent
 DEBUG_DIR = BASE_DIR / "data" / "debug"
-FONT_NAME = "Times New Roman"
+TEMPLATES_DIR = BASE_DIR / "templates"
 
-# -------------------- CSV helpers --------------------
-def find_latest_notices_csv() -> Optional[Path]:
-    if not DEBUG_DIR.exists():
-        return None
-    cands = sorted(DEBUG_DIR.glob("*_notices.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return cands[0] if cands else None
+today = date.today()
+DATE_LONG = today.strftime("%m-%d-%Y")  # for doc contents (e.g., Date field)
+DATE_DIR  = today.strftime("%m-%d-%y")  # for folder+filename (two-digit year)
 
-def read_csv_rows(path: Path) -> List[dict]:
-    with path.open("r", encoding="utf-8-sig", newline="") as f:
-        return list(csv.DictReader(f))
+OUT_DIR = BASE_DIR / "notices" / DATE_DIR
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-def pick(d: dict, *keys: str, default: str = "") -> str:
-    if not d:
-        return default
-    ci = {re.sub(r"\s+", " ", k or "").strip().lower(): k for k in d.keys()}
+# ---- helpers ----
+def money_fmt(val) -> str:
+    try:
+        f = float(str(val).replace(",", "").strip())
+        return f"{f:,.2f}"
+    except Exception:
+        return str(val or "")
+
+def first_nonempty(row, *keys, default=""):
     for k in keys:
-        real = ci.get(re.sub(r"\s+", " ", k or "").strip().lower())
-        if real is not None:
-            val = d.get(real, "")
-            return val.strip() if isinstance(val, str) else (str(val) if val is not None else default)
+        v = row.get(k)
+        if v is not None and str(v).strip():
+            return str(v).strip()
     return default
 
-# -------------------- text/format helpers --------------------
-def slugify_name(name: str) -> str:
-    t = re.sub(r"[\\/:*?\"<>|]+", "", (name or "").strip())
-    t = re.sub(r"\s+", " ", t)
-    return t[:80] or "Unknown"
-
-def short_mm_dd_yy(dt: date) -> str:
-    return dt.strftime("%m-%d-%y")
-
-def parse_mm_dd_yyyy_or_today(s: str) -> date:
+def two_digit_year(y_like) -> str:
     try:
-        return datetime.strptime(s, "%m-%d-%Y").date()
+        y = int(str(y_like).strip())
+        return f"{y % 100:02d}"
     except Exception:
-        return date.today()
+        return today.strftime("%y")
 
-def to_single_line(s: str) -> str:
-    # collapse any line breaks and extra spaces into one line
-    s = (s or "").replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-# -------------------- DOCX replacement with underline + font --------------------
-UNDERLINE_ALWAYS = {"TenantAddress", "AmountDue", "DateOfUnpaidRent"}
-UNDERLINE_FIRST_ONLY = {"TenantName", "Day", "Month"}
-
-def build_token_regex(keys: List[str]) -> re.Pattern:
-    inner = "|".join(re.escape(k) for k in sorted(keys, key=len, reverse=True))
-    return re.compile(r"{{(" + inner + r")}}")
-
-def apply_default_font(doc: Document, font_name: str = FONT_NAME):
-    # Try to set common styles to Times New Roman so non-replaced text follows
-    for name in ("Normal", "Header", "Footer", "Table Normal", "Body Text", "Body Text 2", "Body Text 3"):
+def parse_mmddyyyy_or_like(s: str):
+    if not s:
+        return None
+    s = s.strip()
+    for fmt in ("%m-%d-%Y", "%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d"):
         try:
-            doc.styles[name].font.name = font_name
-        except Exception:
-            pass
-    for i in range(1, 10):
-        try:
-            doc.styles[f"Heading {i}"].font.name = font_name
-        except Exception:
-            pass
-
-def replace_in_paragraph_runs(paragraph, mapping: Dict[str, str],
-                              token_re: re.Pattern,
-                              seen_counts: Dict[str, int]):
-    if not getattr(paragraph, "runs", None):
-        return
-    text = "".join(run.text for run in paragraph.runs)
-    if not text:
-        return
-
-    parts = []
-    last = 0
-    for m in token_re.finditer(text):
-        if m.start() > last:
-            parts.append(("TEXT", text[last:m.start()], None))
-        key = m.group(1)
-        val = mapping.get(key, "")
-        parts.append(("TOKEN", val, key))
-        last = m.end()
-    if last < len(text):
-        parts.append(("TEXT", text[last:], None))
-
-    if all(kind == "TEXT" for kind, _, _ in parts):
-        return
-
-    for r in paragraph.runs:
-        r.text = ""
-    if not paragraph.runs:
-        paragraph.add_run("")
-
-    for kind, payload, key in parts:
-        if payload is None:
+            return datetime.strptime(s, fmt)
+        except ValueError:
             continue
-        run = paragraph.add_run()
-        run.text = payload
-        run.font.name = FONT_NAME  # force Times New Roman for inserted text
-        if kind == "TOKEN" and key:
-            if key in UNDERLINE_ALWAYS:
-                run.underline = True
-            elif key in UNDERLINE_FIRST_ONLY:
-                if seen_counts[key] == 0:
-                    run.underline = True
-                seen_counts[key] += 1
+    return None
 
-def replace_in_table(table, mapping: Dict[str, str],
-                     token_re: re.Pattern,
-                     seen_counts: Dict[str, int]):
-    for row in table.rows:
-        for cell in row.cells:
-            for p in cell.paragraphs:
-                replace_in_paragraph_runs(p, mapping, token_re, seen_counts)
-            for t in cell.tables:
-                replace_in_table(t, mapping, token_re, seen_counts)
+def subtract_months(d: date, months: int) -> date:
+    y, m = d.year, d.month - months
+    while m <= 0:
+        m += 12
+        y -= 1
+    last_day = calendar.monthrange(y, m)[1]
+    return date(y, m, min(d.day, last_day))
 
-def replace_placeholders_with_underlines(doc: Document, mapping: Dict[str, str]):
-    token_re = build_token_regex(list(mapping.keys()))
-    seen_counts = defaultdict(int)
-    for p in doc.paragraphs:
-        replace_in_paragraph_runs(p, mapping, token_re, seen_counts)
-    for t in doc.tables:
-        replace_in_table(t, mapping, token_re, seen_counts)
-    for section in doc.sections:
-        if section.header:
-            for p in section.header.paragraphs:
-                replace_in_paragraph_runs(p, mapping, token_re, seen_counts)
-            for t in section.header.tables:
-                replace_in_table(t, mapping, token_re, seen_counts)
-        if section.footer:
-            for p in section.footer.paragraphs:
-                replace_in_paragraph_runs(p, mapping, token_re, seen_counts)
-            for t in section.footer.tables:
-                replace_in_table(t, mapping, token_re, seen_counts)
+def oneline(s: str) -> str:
+    """Collapse newlines/tabs/multiple spaces into a single spaced line."""
+    s = str(s or "")
+    s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")
+    return re.sub(r"\s+", " ", s).strip()
 
-# -------------------- main --------------------
-def main():
-    ap = argparse.ArgumentParser(description="Generate 3-day notices from CSV")
-    ap.add_argument("--csv", help="Path to notices CSV (from step 5). Defaults to latest data/debug/*_notices.csv")
-    ap.add_argument("--out-dir", help="Output root folder. Defaults to NOTICES_DIR or ./data/notices")
-    args = ap.parse_args()
+def city_from_tenant_address(addr: str) -> str:
+    """
+    City is the text immediately BEFORE the first comma.
+    '1656 84th Ave Apt 2 Oakland, CA 94621-1748' -> 'Oakland'
+    """
+    s = (addr or "").strip()
+    if not s:
+        return ""
+    left = s.split(",", 1)[0].strip()
+    if not left:
+        return ""
+    tokens = left.split()
+    stop = {
+        "st","street","ave","avenue","rd","road","blvd","boulevard",
+        "hwy","highway","pkwy","parkway","trl","trail","ter","terrace",
+        "ln","lane","dr","drive","ct","court","cir","circle","pl","place",
+        "way","aly","alley","apt","unit","ste","suite","bldg","fl","floor",
+        "rm","room","#"
+    }
+    city_tokens = []
+    for tok in reversed(tokens):
+        t = tok.strip(" .,#").lower()
+        if any(ch.isdigit() for ch in t) or t in stop:
+            if city_tokens:
+                break
+            continue
+        city_tokens.append(tok.strip(","))
+    return " ".join(reversed(city_tokens)) if city_tokens else (tokens[-1] if tokens else "")
 
-    in_csv = Path(args.csv).resolve() if args.csv else find_latest_notices_csv()
-    if not in_csv or not Path(in_csv).exists():
-        print({"ok": False, "error": f"No notices CSV found. Use --csv or create one in {DEBUG_DIR}."})
-        sys.exit(1)
+def ensure_unique_path(path: Path) -> Path:
+    """Avoid overwriting if multiple rows share TenantName."""
+    if not path.exists():
+        return path
+    stem, suffix = path.stem, path.suffix
+    i = 2
+    while True:
+        candidate = path.with_name(f"{stem}_{i}{suffix}")
+        if not candidate.exists():
+            return candidate
+        i += 1
 
-    tpl = Path(WORD_TEMPLATE_PATH)
-    if not tpl.exists():
-        print({"ok": False, "error": f"Template not found at WORD_TEMPLATE_PATH: {tpl}"})
-        sys.exit(1)
+def find_source_csv() -> Path:
+    """
+    Priority:
+      1) CLI arg #1
+      2) data/debug/letters_export.csv
+      3) data/debug/<today MM-DD-YYYY>_notices.csv
+      4) newest *_notices.csv in data/debug
+    """
+    if len(sys.argv) > 1:
+        p = Path(sys.argv[1]).expanduser().resolve()
+        if p.exists():
+            return p
 
-    default_out = Path(NOTICES_DIR).resolve() if str(NOTICES_DIR) else (BASE_DIR / "data" / "notices").resolve()
-    out_root = Path(args.out_dir).resolve() if args.out_dir else default_out
-    out_root.mkdir(parents=True, exist_ok=True)
+    p = DEBUG_DIR / "letters_export.csv"
+    if p.exists():
+        return p
 
-    rows = read_csv_rows(Path(in_csv))
-    if not rows:
-        print({"ok": False, "error": f"No rows in {in_csv}"})
-        sys.exit(1)
+    p = DEBUG_DIR / f"{DATE_LONG}_notices.csv"
+    if p.exists():
+        return p
 
-    # Read template once to avoid file locks
-    tpl_bytes = tpl.read_bytes()
+    candidates = sorted(
+        (Path(x) for x in glob.glob(str(DEBUG_DIR / "*_notices.csv"))),
+        key=lambda x: x.stat().st_mtime,
+        reverse=True
+    )
+    if candidates:
+        return candidates[0]
 
-    made = 0
-    outputs: List[str] = []
-    used_names: Dict[str, int] = {}
+    # Return non-existent default to trigger clear error message
+    return DEBUG_DIR / "letters_export.csv"
 
-    for r in rows:
-        # Build mapping (flatten address to single line)
-        tenant_name = pick(r, "TenantName")
-        tenant_addr = to_single_line(pick(r, "TenantAddress"))
-        mapping = {
-            "TenantName": tenant_name,
-            "TenantAddress": tenant_addr,
-            "AmountDue": pick(r, "AmountDue"),
-            "DateOfUnpaidRent": pick(r, "DateOfUnpaidRent"),
-            "PropertyOwner": pick(r, "PropertyOwner"),
-            "Date": pick(r, "Date"),
-            "Day": pick(r, "Day"),
-            "Month": pick(r, "Month"),
-            "Year": pick(r, "Year"),
-            "County": pick(r, "County"),
-        }
+def find_template() -> Path:
+    """
+    Priority:
+      1) CLI arg #2 (explicit template path)
+      2) templates/3Day_Notice_Template.docx
+      3) templates/3Day Notice Template.docx
+      4) first match of templates/3Day*Notice*.docx
+      5) if only one .docx in templates/, use it
+    """
+    # CLI override (argument #2)
+    if len(sys.argv) > 2:
+        t = Path(sys.argv[2]).expanduser().resolve()
+        if t.exists():
+            return t
 
-        row_date = parse_mm_dd_yyyy_or_today(mapping["Date"])
-        short_date = short_mm_dd_yy(row_date)
-        row_dir = out_root / short_date
-        row_dir.mkdir(parents=True, exist_ok=True)
+    # Known names
+    cands = [
+        TEMPLATES_DIR / "3Day_Notice_Template.docx",
+        TEMPLATES_DIR / "3Day Notice Template.docx",
+    ]
+    for c in cands:
+        if c.exists():
+            return c
 
-        tenant_slug = slugify_name(tenant_name)
-        base_name = f"{short_date}_{tenant_slug}.docx"
-        n = used_names.get(base_name, 0)
-        used_names[base_name] = n + 1
-        file_name = base_name if n == 0 else f"{short_date}_{tenant_slug}_{n+1}.docx"
+    # Pattern search
+    globbed = sorted(Path(p) for p in glob.glob(str(TEMPLATES_DIR / "3Day*Notice*.docx")))
+    if globbed:
+        return globbed[0]
 
-        out_path = row_dir / file_name
+    # Fallback: single docx in templates
+    any_docx = sorted(Path(p) for p in glob.glob(str(TEMPLATES_DIR / "*.docx")))
+    if len(any_docx) == 1:
+        return any_docx[0]
 
-        try:
-            doc = Document(BytesIO(tpl_bytes))
-            apply_default_font(doc, FONT_NAME)  # set document styles to Times New Roman
-            replace_placeholders_with_underlines(doc, mapping)
-            doc.save(out_path)
-            print(f"WRITE: {out_path}")
-            outputs.append(str(out_path))
-            made += 1
-        except Exception as e:
-            print(f"ERROR saving {out_path}: {e}")
+    # If we get here, no usable template was found
+    return TEMPLATES_DIR / "3Day_Notice_Template.docx"
 
-    print({
-        "ok": made > 0,
-        "template": str(tpl),
-        "input_csv": str(in_csv),
-        "output_root": str(out_root),
-        "files_written": made,
-        "examples": outputs[:3],
-    })
-    sys.exit(0 if made > 0 else 1)
+# ---- start ----
+SRC_CSV = find_source_csv()
+if not SRC_CSV.exists():
+    raise FileNotFoundError(
+        "No source CSV found.\n"
+        f"Tried:\n"
+        f"  1) CLI arg (if provided)\n"
+        f"  2) {DEBUG_DIR / 'letters_export.csv'}\n"
+        f"  3) {DEBUG_DIR / (DATE_LONG + '_notices.csv')}\n"
+        f"  4) newest '*_notices.csv' in {DEBUG_DIR}\n"
+        "Tip: run Step 5 first or pass a path:\n"
+        f'  python {Path(__file__).name} "data/debug/{DATE_LONG}_notices.csv"\n'
+    )
 
-if __name__ == "__main__":
-    main()
+TEMPLATE_PATH = find_template()
+if not TEMPLATE_PATH.exists():
+    tried = [
+        str(TEMPLATES_DIR / "3Day_Notice_Template.docx"),
+        str(TEMPLATES_DIR / "3Day Notice Template.docx"),
+        str(TEMPLATES_DIR / "3Day*Notice*.docx"),
+        str(TEMPLATES_DIR / "*.docx"),
+    ]
+    raise FileNotFoundError(
+        "Template not found.\n"
+        f"Tried (in order):\n  1) CLI arg #2 (if provided)\n  2) {tried[0]}\n  3) {tried[1]}\n"
+        f"  4) {tried[2]}\n  5) If exactly one .docx exists at {TEMPLATES_DIR}, use that.\n"
+        "Tip: pass the template explicitly (quote paths with spaces):\n"
+        f'  python {Path(__file__).name} "{SRC_CSV}" "{TEMPLATES_DIR / "3Day Notice Template.docx"}"\n'
+    )
+
+with SRC_CSV.open("r", encoding="utf-8") as f:
+    rows = list(csv.DictReader(f))
+
+print({
+    "step": "generate_docs",
+    "template": str(TEMPLATE_PATH),
+    "csv": str(SRC_CSV),
+    "rows_in": len(rows),
+    "output_dir": str(OUT_DIR),
+})
+
+for idx, r in enumerate(rows, start=1):
+    tenant_name     = first_nonempty(r, "TenantName", "tenant_name")
+    tenant_addr_raw = first_nonempty(r, "TenantAddress", "unit_address")
+    tenant_addr     = oneline(tenant_addr_raw)  # force single line
+
+    owner_name = first_nonempty(r, "PropertyOwner", "owner_name")
+    amount_due = money_fmt(first_nonempty(r, "AmountDue", "total_unpaid"))
+
+    # Doc-visible date fields
+    date_str  = first_nonempty(r, "Date") or DATE_LONG
+    d_dt      = parse_mmddyyyy_or_like(date_str) or datetime.strptime(DATE_LONG, "%m-%d-%Y")
+    day_str   = first_nonempty(r, "Day") or str(int(d_dt.strftime("%d")))
+    month_str = first_nonempty(r, "Month") or d_dt.strftime("%B")
+    year_two  = two_digit_year(first_nonempty(r, "Year", "year", default=d_dt.year))
+
+    # DateOfUnpaidRent (prefer CSV; else two months back from today)
+    due_src = first_nonempty(r, "DateOfUnpaidRent") or subtract_months(today, 2).strftime("%m-%d-%Y")
+
+    county = first_nonempty(r, "County", "building_county")
+    city   = first_nonempty(r, "City") or city_from_tenant_address(tenant_addr)
+
+    context = {
+        "TenantName": tenant_name,
+        "TenantAddress": tenant_addr,  # single line
+        "AmountDue": amount_due,
+        "DateOfUnpaidRent": due_src,
+        "PropertyOwner": owner_name,
+        "Date": date_str,
+        "Day": day_str,
+        "Month": month_str,
+        "Year": year_two,   # two digits
+        "City": city,       # before first comma
+        "County": county,
+    }
+
+    doc = DocxTemplate(str(TEMPLATE_PATH))
+    doc.render(context)
+
+    # Filename: MM-DD-YY_TenantName.docx in notices/MM-DD-YY/
+    safe_name = re.sub(r"[^\w\-. ]", "_", tenant_name or f"row_{idx}")
+    file_name = f"{DATE_DIR}_{safe_name}.docx"
+    out_path = ensure_unique_path(OUT_DIR / file_name)
+
+    doc.save(str(out_path))
+
+print({"ok": True, "output_dir": str(OUT_DIR)})
